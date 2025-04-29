@@ -367,8 +367,9 @@
             const categories = {
                 personal: ['whoami', 'about', 'contact', 'projects', 'about',],
                 system: ['help', 'clear', 'fetch', 'ssh'],
-                fun: ['joke', 'catfact', 'tiers'],
-                misc: ['credits']
+                fun: ['joke', 'catfact'],
+                tools: ['tiers', 'define', 'calc', 'mcserver'],
+                misc: ['credits',]
             };
 
             let output = '';
@@ -605,12 +606,39 @@
                 }
             },
             tiers: {
-                desc: "Lookup user tiers",
+                desc: "Lookup user tiers on mctiers.io",
                 execute: (username) => {
                     if (!username) {
                         return "usage: tiers <username>";
                     }
                     return getUserTiers(username).then(tiers => tiers);
+                }
+            },
+            define: {
+                desc: "Define a word",
+                execute: (word) => {
+                    if (!word) {
+                        return "usage: define <word>";
+                    }
+                    return getDefinition(word).then(definition => definition);
+                }
+            },
+            calc: {
+                desc: "Evaluate a mathematical expression",
+                execute: (expression) => {
+                    if (!expression) {
+                        return "usage: calc <yourmath here>";
+                    }
+                    return evaluateExpression(expression);
+                }
+            },
+            mcserver: {
+                desc: "Lookup Minecraft server status",
+                execute: (address) => {
+                    if (!address) {
+                        return "usage: mcserver <address>";
+                    }
+                    return getMinecraftServerStatus(address).then(status => status);
                 }
             },
         };
@@ -700,6 +728,117 @@
                 .catch(error => {
                     console.error("Error fetching user tiers:", error);
                     return `Failed to fetch user tiers: ${error.message}`;
+                });
+        }
+
+        function getDefinition(word) {
+            const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${word}`;
+            return fetch(url)
+                .then(response => {
+                    if (!response.ok) {
+                        if (response.status === 404) {
+                            return { error: `Word "${word}" not found.` };
+                        }
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.error) {
+                        return data.error;
+                    }
+                    if (!data || data.length === 0) {
+                        return `No definition found for "${word}".`;
+                    }
+
+                    const entry = data[0]; // Assuming the first entry is the primary one
+                    let output = `Word: ${entry.word}\n`;
+
+                    if (entry.phonetic) {
+                        output += `Phonetic: ${entry.phonetic}\n`;
+                    }
+
+                    if (entry.origin) {
+                        output += `Origin: ${entry.origin}\n`;
+                    }
+
+                    if (entry.meanings && entry.meanings.length > 0) {
+                        entry.meanings.forEach(meaning => {
+                            output += `\nPart of Speech: ${meaning.partOfSpeech}\n`;
+                            if (meaning.definitions && meaning.definitions.length > 0) {
+                                meaning.definitions.forEach((definition, index) => {
+                                    output += `${index + 1}. ${definition.definition}\n`;
+                                    if (definition.example) {
+                                        output += `   Example: "${definition.example}"\n`;
+                                    }
+                                });
+                            }
+                        });
+                    } else {
+                        output += "No meanings found for this word.";
+                    }
+
+                    return output;
+                })
+                .catch(error => {
+                    console.error("Error fetching definition:", error);
+                    return `Failed to fetch definition: ${error.message}`;
+                });
+        }
+
+        function evaluateExpression(expression) {
+            try {
+                // Use eval() to evaluate the mathematical expression
+                const result = eval(expression);
+                // Check if the result is a valid number
+                if (typeof result === 'number' && isFinite(result)) {
+                    return result.toString();
+                } else {
+                    return "Invalid expression.";
+                }
+            } catch (error) {
+                // Catch any errors during evaluation (e.g., syntax errors)
+                console.error("Error evaluating expression:", error);
+                return "Error evaluating expression. Please check your syntax.";
+            }
+        }
+
+        function getMinecraftServerStatus(address) {
+            const url = `https://api.mcsrvstat.us/3/${address}`;
+            return fetch(url)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (!data || !data.online) {
+                        return `Server "${address}" is offline or not found.`;
+                    }
+
+                    let output = `Server: ${address}\n`;
+                    output += `Status: Online\n`;
+
+                    if (data.version) {
+                        // Handle cases where version is an array or string
+                        const version = Array.isArray(data.version) ? data.version.join(', ') : data.version;
+                        output += `Version: ${version}\n`;
+                    }
+
+                    if (data.players) {
+                        output += `Players: ${data.players.online}/${data.players.max}\n`;
+                    }
+
+                    if (data.motd && data.motd.clean) {
+                        output += `MOTD:\n${data.motd.clean.join('\n')}\n`;
+                    }
+
+                    return output;
+                })
+                .catch(error => {
+                    console.error("Error fetching server status:", error);
+                    return `Failed to fetch server status: ${error.message}`;
                 });
         }
     </script>
