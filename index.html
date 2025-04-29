@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>lynzl@spellbound:~</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+    <style>
+        @font-face {
+            font-family: 'TerminusWeb';
+            src: url('Terminus.ttf') format('truetype');
+            font-display: swap;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        /* Color scheme */
+        :root {
+            --lavender: #7afdf2;
+            --lilac: #b4befe;
+            --mint: #d4a1e3;
+            --pink: #c2f5ed;
+            --blue: #89b4fa;
+            --yellow: #c2f896;
+            --white: #cdd6f4;
+            --gray: #a1a6b9;
+        }
+
+        body {
+            background: #1a1a1a;
+            color: var(--white);
+            font-size: 16px;
+            line-height: 1.0;
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            -webkit-font-smoothing: none;
+            -moz-osx-font-smoothing: grayscale;
+            font-smooth: never;
+            image-rendering: pixelated;
+        }
+
+        #terminal {
+            white-space: pre-wrap;
+            height: calc(100vh - 40px);
+            overflow-y: auto;
+            padding-bottom: 2em;
+            cursor: text;
+            font-size: 16px;
+            line-height: 1.2;
+            -webkit-font-smoothing: none;
+            -moz-osx-font-smoothing: grayscale;
+            font-smooth: never;
+            image-rendering: pixelated;
+            color: var(--white);
+        }
+
+        .input-line {
+            display: flex;
+            align-items: center;
+            margin-top: 0.5em;
+        }
+
+        .prompt {
+            color: var(--lavender);
+            user-select: none;
+            margin-right: 0.5em;
+        }
+
+        .static-cmd {
+            color: var(--mint);
+        }
+
+        .output {
+            margin-bottom: 4px;
+            white-space: pre-wrap;
+            color: var(--white);
+        }
+
+        .command-history {
+            color: var(--gray);
+        }
+
+        .error {
+            color: #f38ba8;
+        }
+
+        pre.help {
+            color: var(--white);
+            margin: 0.5em 0 0.5em 0;
+            font-family: 'TerminusWeb', monospace;
+            font-size: 16px;
+            line-height: 1.0;
+            letter-spacing: 0;
+            background: none;
+            border: none;
+            padding: 0;
+            box-shadow: none;
+            image-rendering: pixelated;
+        }
+
+        #terminal::-webkit-scrollbar {
+            width: 0;
+            background: transparent;
+        }
+
+        #command-input, .command-input {
+            background: none;
+            border: none;
+            color: var(--white);
+            font-size: 16px;
+            outline: none;
+            caret-color: var(--lavender);
+            width: 100%;
+            box-shadow: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        body, #terminal, #command-input, .command-input {
+            font-family: 'TerminusWeb', monospace;
+            font-size: 16px;
+            line-height: 1.0;
+            -webkit-font-smoothing: none;
+            -moz-osx-font-smoothing: grayscale;
+            font-smooth: never;
+            image-rendering: pixelated;
+            letter-spacing: 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="terminal">
+        <div class="output">Type 'help' to list available commands.</div>
+    </div>
+
+    <script>
+        class Terminal {
+            constructor() {
+                this.terminal = document.getElementById('terminal');
+                this.commandHistory = [];
+                this.historyIndex = -1;
+                this.currentInput = '';
+                this.tabCompletionCandidates = [];
+                this.tabCompletionIndex = 0;
+                this.isWaitingForSshConfirmation = false; // State for SSH confirmation
+                this.sshTargetHost = null; // Store target host during confirmation
+                this.addNewInputLine();
+                this.scrollToBottom();
+            }
+
+            setupEventListeners() {
+                this.terminal.addEventListener('click', (e) => {
+                    if (e.target === this.terminal || e.target.classList.contains('output') || e.target.classList.contains('command-history')) {
+                        this.input.focus();
+                    }
+                });
+                this.input.addEventListener('keydown', (e) => this.handleKeyDown(e));
+            }
+
+            handleKeyDown(e) {
+                switch(e.key) {
+                    case 'Enter':
+                        e.preventDefault();
+                        this.processCommand(this.input.value.trim());
+                        break;
+                    case 'ArrowUp':
+                        e.preventDefault();
+                        this.navigateHistory('up');
+                        break;
+                    case 'ArrowDown':
+                        e.preventDefault();
+                        this.navigateHistory('down');
+                        break;
+                    case 'Tab':
+                        e.preventDefault();
+                        this.handleTabCompletion();
+                        break;
+                }
+            }
+
+            navigateHistory(direction) {
+                if (direction === 'up') {
+                    if (this.historyIndex < this.commandHistory.length - 1) {
+                        if (this.historyIndex === -1) {
+                            this.currentInput = this.input.value;
+                        }
+                        this.historyIndex++;
+                        this.input.value = this.commandHistory[this.commandHistory.length - 1 - this.historyIndex];
+                    }
+                } else {
+                    if (this.historyIndex > -1) {
+                        this.historyIndex--;
+                        if (this.historyIndex === -1) {
+                            this.input.value = this.currentInput;
+                        } else {
+                            this.input.value = this.commandHistory[this.commandHistory.length - 1 - this.historyIndex];
+                        }
+                    }
+                }
+            }
+
+            handleTabCompletion() {
+                const currentInput = this.input.value.trim();
+                if (!currentInput) return;
+                if (this.tabCompletionCandidates.length === 0) {
+                    this.tabCompletionCandidates = Object.keys(commands).filter(cmd => cmd.startsWith(currentInput));
+                    this.tabCompletionIndex = 0;
+                }
+                if (this.tabCompletionCandidates.length > 0) {
+                    this.input.value = this.tabCompletionCandidates[this.tabCompletionIndex];
+                    this.tabCompletionIndex = (this.tabCompletionIndex + 1) % this.tabCompletionCandidates.length;
+                }
+            }
+
+            scrollToBottom() {
+                this.terminal.scrollTop = this.terminal.scrollHeight;
+            }
+
+            createPrompt(cmd) {
+                const prompt = document.createElement('span');
+                prompt.className = 'prompt';
+                prompt.textContent = 'lynzl@spellbound:~#';
+                const cmdSpan = document.createElement('span');
+                cmdSpan.className = 'static-cmd';
+                cmdSpan.textContent = ' ' + cmd;
+                const line = document.createElement('div');
+                line.className = 'input-line';
+                line.appendChild(prompt);
+                line.appendChild(cmdSpan);
+                return line;
+            }
+
+            createOutput(content, isError = false, isHelp = false) {
+                if (isHelp) {
+                    const pre = document.createElement('pre');
+                    pre.className = 'help';
+                    pre.textContent = content;
+                    return pre;
+                }
+                const output = document.createElement('div');
+                output.className = `output${isError ? ' error' : ''}`;
+                output.textContent = content;
+                return output;
+            }
+
+            clearVisibleScreen() {
+                while (this.terminal.firstChild) {
+                    this.terminal.removeChild(this.terminal.firstChild);
+                }
+                this.addNewInputLine();
+            }
+
+            addNewInputLine() {
+                const existingInputs = this.terminal.querySelectorAll('.input-line');
+                existingInputs.forEach(line => {
+                    if (line.querySelector('input')) {
+                        this.terminal.removeChild(line);
+                    }
+                });
+                const inputLine = document.createElement('div');
+                inputLine.className = 'input-line';
+                inputLine.innerHTML = `
+                    <span class="prompt">lynzl@spellbound:~#</span>
+                    <input type="text" class="command-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+                `;
+                this.terminal.appendChild(inputLine);
+                this.input = inputLine.querySelector('.command-input');
+                this.input.focus();
+                this.setupEventListeners();
+            }
+
+            processCommand(cmd) {
+                // Handle SSH confirmation input first
+                if (this.isWaitingForSshConfirmation) {
+                    const confirmationResponse = cmd.toLowerCase();
+                    const targetHost = this.sshTargetHost;
+
+                    // Add the static line for the 'yes'/'no' input
+                    const prevInputLine = this.input.parentElement;
+                    const staticLine = this.createPrompt(cmd);
+                    this.terminal.replaceChild(staticLine, prevInputLine);
+
+                    // Reset state immediately
+                    this.isWaitingForSshConfirmation = false;
+                    this.sshTargetHost = null;
+
+                    if (confirmationResponse === 'yes' || confirmationResponse === 'y') {
+                        const outputMessage = `Connecting to ${targetHost}...`;
+                        const output = this.createOutput(outputMessage);
+                        this.terminal.appendChild(output);
+                        this.scrollToBottom(); // Scroll down to show the message
+
+                        // Wait 2 seconds then redirect
+                        setTimeout(() => {
+                            window.location.href = 'https://spellbound.sh';
+                        }, 2000);
+                        // Don't add a new input line here as we are redirecting
+                    } else {
+                        const outputMessage = "Connection cancelled.";
+                        const output = this.createOutput(outputMessage);
+                        this.terminal.appendChild(output);
+                        this.addNewInputLine(); // Add input line only if cancelled
+                        this.scrollToBottom();
+                    }
+                    return; // Stop further processing for this input
+                }
+
+                // Normal command processing starts here
+                const prevInputLine = this.input.parentElement;
+                const staticLine = this.createPrompt(cmd);
+                this.terminal.replaceChild(staticLine, prevInputLine);
+
+                if (!cmd) {
+                    this.addNewInputLine();
+                    return;
+                }
+                this.commandHistory.push(cmd);
+                this.historyIndex = -1;
+                this.currentInput = '';
+                this.tabCompletionCandidates = [];
+                this.tabCompletionIndex = 0;
+                const commandParts = cmd.split(' ');
+                const baseCmd = commandParts[0];
+                const argument = commandParts.slice(1).join(' ');
+
+                if (commands[baseCmd]) {
+                    const result = commands[baseCmd].execute(argument);
+                    if (result && typeof result.then === 'function') {
+                        result.then(outputContent => {
+                            const output = this.createOutput(outputContent);
+                            this.terminal.appendChild(output);
+                            this.addNewInputLine();
+                            this.scrollToBottom();
+                        });
+                    } else if (result) {
+                        if (baseCmd === 'help') {
+                            const output = this.createOutput(result, false, true);
+                            this.terminal.appendChild(output);
+                        } else if (baseCmd === 'fetch') {
+                            const output = document.createElement('div');
+                            output.className = 'output';
+                            output.innerHTML = result;
+                            this.terminal.appendChild(output);
+                        } else {
+                            const output = this.createOutput(result);
+                            this.terminal.appendChild(output);
+                        }
+                        this.addNewInputLine();
+                        this.scrollToBottom();
+                    }
+                } else {
+                    const error = this.createOutput(`-bash: ${cmd}: command not found`, true);
+                    this.terminal.appendChild(error);
+                    this.addNewInputLine();
+                    this.scrollToBottom();
+                }
+            }
+        }
+
+        function formatHelp(commands) {
+            const categories = {
+                personal: ['whoami', 'about', 'contact', 'projects', 'about',],
+                system: ['help', 'clear', 'fetch', 'ssh'],
+                fun: ['joke', 'catfact', 'tiers'],
+                misc: ['credits']
+            };
+
+            let output = '';
+            for (const category in categories) {
+                output += `\n${category.toUpperCase()}:\n`;
+                const maxCmdLen = Math.max(...categories[category].map(cmd => cmd.length));
+                categories[category].forEach(cmd => {
+                    output += `${cmd.padEnd(maxCmdLen + 2)}${commands[cmd].desc}\n`;
+                });
+            }
+            return output;
+        }
+
+        function calculateElapsedTime(startDate) {
+            const now = new Date();
+            let timeDiff = now.getTime() - startDate.getTime();
+
+            let milliseconds = Math.floor(timeDiff % 1000);
+            timeDiff = Math.floor(timeDiff / 1000);
+            let seconds = Math.floor(timeDiff % 60);
+            timeDiff = Math.floor(timeDiff / 60);
+            let minutes = Math.floor(timeDiff % 60);
+            timeDiff = Math.floor(timeDiff / 60);
+            let hours = Math.floor(timeDiff % 24);
+            let days = Math.floor(timeDiff / 24);
+
+            let years = Math.floor(days / 365);
+            days %= 365;
+            let months = Math.floor(days / 30);
+            days %= 30;
+
+            return `${years}y, ${months}m, ${days}d, ${hours}h, ${minutes}m, ${seconds}s, ${milliseconds}ms`;
+        }
+
+        function startTimesinceInterval() {
+            if (window._timesinceInterval) return;
+            window._timesinceInterval = setInterval(() => {
+                const t1 = document.getElementById('timer1');
+                const t2 = document.getElementById('timer2');
+                if (t1) t1.textContent = calculateElapsedTime(new Date('2024-09-12T00:00:00Z'));
+                if (t2) t2.textContent = calculateElapsedTime(new Date('2025-01-13T00:00:00Z'));
+            }, 100);
+        }
+
+        const commands = {
+            help: {
+                desc: "Show this help message",
+                execute: () => formatHelp(commands)
+            },
+            whoami: {
+                desc: "Display current user",
+                execute: () => "lynzl"
+            },
+            projects: {
+                desc: "List projects",
+                execute: () => [
+                    "Loka Fabric Modpack     - https://modrinth.com/modpack/loka-fabric",
+                    "Minecraft Server 'magi' - https://discord.gg/W9zsKpTQGK"
+                ].join('\n')
+            },
+            contact: {
+                desc: "Show contact information",
+                execute: () => [
+                    "discord: lyn1",
+                    "github:  https://github.com/Lyn1dev"
+                ].join('\n')
+            },
+            clear: {
+                desc: "Clear the terminal",
+                execute: function() {
+                    terminal.clearVisibleScreen();
+                    return '';
+                }
+            },
+            ssh: {
+                desc: "Connect to a remote computer.",
+                execute: (args) => {
+                    if (args === 'madeline@spellbound') {
+                        // Display confirmation question in the terminal
+                        const question = `Are you sure you want to connect to ${args}? (yes/no)`;
+                        const output = terminal.createOutput(question); // Use the terminal instance
+                        terminal.terminal.appendChild(output); // Append question to terminal
+
+                        // Set state to wait for confirmation
+                        terminal.isWaitingForSshConfirmation = true;
+                        terminal.sshTargetHost = args;
+
+                         // Add a new input line for the yes/no answer, with a simple prompt '>'
+                         const inputLine = document.createElement('div');
+                         // Add a specific class for potential styling
+                         inputLine.className = 'input-line confirmation-input-line';
+                         inputLine.innerHTML = `
+                             <span class="confirmation-prompt" style="color: var(--gray); margin-right: 0.5em;">></span>
+                             <input type="text" class="command-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+                         `;
+                         terminal.terminal.appendChild(inputLine);
+                         terminal.input = inputLine.querySelector('.command-input');
+                        terminal.input.focus();
+                        terminal.setupEventListeners(); // Re-attach listeners to the new input
+                        terminal.scrollToBottom();
+
+                        return ''; // Don't add another input line via processCommand's default path
+
+                    } else if (args) {
+                         return `-bash: ssh: Could not resolve hostname ${args}: Name or service not known`;
+                    }
+                    else {
+                        return "usage: ssh user@hostname. Try ssh madeline@spellbound";
+                    }
+                }
+            },
+            fetch: {
+                desc: "Display system information",
+                execute: () => {
+                    const logoLines = [
+                        "...=*#*+...*.*.",
+                        ".*#%%%%%#**#**%*:",
+                        "        **##@%##*+",
+                        "        +##**+*#####**#",
+                        "         #*++**********##",
+                        "        *%*+******##*##**#@           *. ",
+                        "       *#****@##**##+++++++++++****+**   ",
+                        "       .%@#**#++++*******@@%***%=        ",
+                        "   %%@@@@#++++**+****%%@.                ",
+                        " %%@@#+++=+*%%@.                         ",
+                        "#+%=#@@+=                                 "
+                    ];
+                    const infoLines = [
+                        "{blue}lynzl{reset}{gray}@{blue}spellbound{reset}",
+                        "{gray}---------------------------{reset}",
+                        "{blue}OS:        {reset}{white}spellboundOS v0.1{reset}",
+                        "{blue}Kernel:    {reset}{white}6.1.0-31-amd64{reset}",
+                        "{blue}Uptime:    {reset}{white}4 years, 230 days, 12 hours, 6 min{reset}",
+                        "{blue}Packages:  {reset}{white}54 (dpkg){reset}",
+                        "{blue}Shell:     {reset}{white}bash 5.2.15{reset}",
+                        "{blue}Terminal:  {reset}{white}/dev/pts/0{reset}",
+                        "{blue}CPU:       {reset}{white}AMD Ryzen 12 9900 (194){reset}",
+                        "{blue}GPU:       {reset}{white}NVIDIA RTX 6090{reset}",
+                        "{blue}Memory:    {reset}{white}19995MiB / 63745MiB{reset}"
+                    ];
+                    const logoWidth = Math.max(...logoLines.map(l => l.length));
+                    const infoWidth = Math.max(...infoLines.map(l => l.replace(/\{[^}]+\}/g, '').length));
+                    const lines = [];
+                    const totalLines = Math.max(logoLines.length, infoLines.length);
+                    for (let i = 0; i < totalLines; i++) {
+                        const logo = logoLines[i] ? logoLines[i].padEnd(logoWidth, ' ') : ' '.repeat(logoWidth);
+                        const info = infoLines[i] ? infoLines[i] : '';
+                        lines.push(logo + '   ' + info);
+                    }
+                    const colorBar =
+                        ' '.repeat(logoWidth + 3) +
+                        '{gray}██{reset}' +
+                        '{red}██{reset}' +
+                        '{yellow}██{reset}' +
+                        '{green}██{reset}' +
+                        '{mint}██{reset}' +
+                        '{blue}██{reset}' +
+                        '{lavender}██{reset}' +
+                        '{white}██{reset}';
+                    lines.push('');
+                    lines.push(colorBar);
+                    let out = lines.join('\n');
+                    const colorMap = {
+                        lavender: 'var(--lavender)',
+                        lilac: 'var(--lilac)',
+                        mint: 'var(--mint)',
+                        pink: 'var(--pink)',
+                        blue: 'var(--blue)',
+                        yellow: 'var(--yellow)',
+                        white: 'var(--white)',
+                        gray: 'var(--gray)',
+                        red: '#f38ba8',
+                        green: '#a6e3a1',
+                        reset: false
+                    };
+                    out = out.replace(/\{(\w+)\}/g, (m, c) => colorMap[c] ? `<span style=\"color:${colorMap[c]}\">` : '</span>');
+                    return `<pre style='margin:0;background:none;border:none;font-family:inherit;font-size:inherit;line-height:1.1;'>${out}</pre>`;
+                }
+            },
+            about: {
+                desc: "About me",
+                execute: () => [
+                    "I'm lynzl, i like cats idk",
+                    "I'm pretty good at Java, JavaScript, Python and other stuff.",
+                    "I play video games sometimes.",
+                    "I do take commissions if you wanna hire me to code something lol"
+                ].join('\n')
+            },
+            credits: {
+                desc: "Show credits for this project",
+                execute: () => [
+                    "The idea for this website came solely from 'madeline.sh'",
+                    "You should check that site out, it is so much cooler than this one!",
+                    "madeline gave me this subdomain. run `ssh madeline@spellbound`."
+                ].join('\n')
+            },
+            timesince: {
+                desc: "Live timers for two very important dates",
+                execute: () => {
+                    setTimeout(() => {
+                        // Replace the timer lines with spans for live updating
+                        const outputs = document.querySelectorAll('.output');
+                        let last = null;
+                        outputs.forEach(o => {
+                            if (o.textContent.includes('💊') && o.textContent.includes('❤️')) last = o;
+                        });
+                        if (last && !last.querySelector('#timer1')) {
+                            last.innerHTML = last.innerHTML.replace(
+                                /💊 ([^\n]*)/,
+                                '💊 <span id="timer1">$1</span>'
+                            ).replace(
+                                /❤️ ([^\n]*)/,
+                                '❤️ <span id="timer2">$1</span>'
+                            );
+                        }
+                        startTimesinceInterval();
+                    }, 0);
+                    return [
+                        '💊 Loading...',
+                        '❤️ Loading...'
+                    ].join('\n');
+                }
+            },
+            joke: {
+                desc: "Display a random joke. Try `joke pun`! (Categories: programming, misc, dark, pun, spooky, christmas)",
+                execute: (category) => {
+                    return getJoke(category).then(joke => joke);
+                }
+            },
+            catfact: {
+                desc: "Display a random cat fact",
+                execute: () => {
+                    return getCatFact().then(fact => fact);
+                }
+            },
+            tiers: {
+                desc: "Lookup user tiers",
+                execute: (username) => {
+                    if (!username) {
+                        return "usage: tiers <username>";
+                    }
+                    return getUserTiers(username).then(tiers => tiers);
+                }
+            },
+        };
+
+        const terminal = new Terminal();
+
+        function getJoke(category) {
+            let url = 'https://v2.jokeapi.dev/joke/Any';
+            if (category) {
+                url = `https://v2.jokeapi.dev/joke/${category}`;
+            }
+
+            return fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        return "Failed to fetch joke.";
+                    }
+
+                    if (data.joke) {
+                        return data.joke;
+                    } else if (data.setup && data.delivery) {
+                        return `${data.setup}\n${data.delivery}`;
+                    } else {
+                        return "Failed to fetch joke.";
+                    }
+                })
+                .catch(error => {
+                    console.error("Error fetching joke:", error);
+                    return "Failed to fetch joke.";
+                });
+        }
+
+        function getCatFact() {
+            const url = 'https://meowfacts.herokuapp.com';
+            return fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    // Assuming the API returns { "data": ["fact text"] }
+                    if (data && data.data && Array.isArray(data.data) && data.data.length > 0) {
+                        return data.data[0]; // Return the first fact in the data array
+                    } else {
+                        // Fallback or alternative structure check if needed
+                        console.warn("Unexpected API response structure from meowfacts:", data);
+                        return "Failed to fetch cat fact: Unexpected API response format.";
+                    }
+                })
+                .catch(error => {
+                    console.error("Error fetching cat fact:", error);
+                    return "Failed to fetch cat fact.";
+                });
+        }
+
+        function getUserTiers(username) {
+            const url = `https://mctiers.io/api/search_profile/${username}`;
+            return fetch(url)
+                .then(response => {
+                    console.log('MCTiers API Response Status:', response.status);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('MCTiers API Response Data:', data);
+                    if (data && data.rankings) {
+                        let output = `Tiers for ${username}:\n`;
+                        for (const gamemode in data.rankings) {
+                            const tierData = data.rankings[gamemode];
+                            const retired = tierData.retired ? 'R' : '';
+                            const pos = tierData.pos === 1 ? 'L' : 'H';
+                            const tier = tierData.tier;
+                            output += `${gamemode.charAt(0).toUpperCase() + gamemode.slice(1)}: ${retired}${pos}T${tier}\n`;
+                        }
+                        if (Object.keys(data.rankings).length === 0) {
+                            output += "No tier data found for this user.";
+                        }
+                        return output;
+                    } else if (data && data.message) {
+                         return `Error: ${data.message}`;
+                    }
+                    else {
+                        console.warn("Unexpected API response structure from mctiers:", data);
+                        return "Failed to fetch user tiers: Unexpected API response format.";
+                    }
+                })
+                .catch(error => {
+                    console.error("Error fetching user tiers:", error);
+                    return `Failed to fetch user tiers: ${error.message}`;
+                });
+        }
+    </script>
+</body>
+</html>
