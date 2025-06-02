@@ -150,6 +150,16 @@
                 this.tabCompletionIndex = 0;
                 this.isWaitingForSshConfirmation = false; // State for SSH confirmation
                 this.sshTargetHost = null; // Store target host during confirmation
+
+                // Game state for Guess the Number
+                this.isGuessGameActive = false;
+                this.guessGameSecretNumber = 0;
+                this.guessGameAttemptsLeft = 0;
+                this.guessGameMin = 1;
+                this.guessGameMax = 100;
+                this.guessGameTotalAttempts = 10;
+
+
                 this.addNewInputLine();
                 this.scrollToBottom();
             }
@@ -225,7 +235,12 @@
             createPrompt(cmd) {
                 const prompt = document.createElement('span');
                 prompt.className = 'prompt';
+                // Modify prompt if game is active (optional, for now using default)
+                // if (this.isGuessGameActive) {
+                //     prompt.textContent = `Guess (${this.guessGameAttemptsLeft}): `;
+                // } else {
                 prompt.textContent = 'lynzl@spellbound:~#';
+                // }
                 const cmdSpan = document.createElement('span');
                 cmdSpan.className = 'static-cmd';
                 cmdSpan.textContent = ' ' + cmd;
@@ -265,6 +280,10 @@
                 });
                 const inputLine = document.createElement('div');
                 inputLine.className = 'input-line';
+                // let promptText = 'lynzl@spellbound:~#';
+                // if (this.isGuessGameActive) { // Example for custom prompt
+                //    promptText = `Guess (${this.guessGameAttemptsLeft}):`;
+                // }
                 inputLine.innerHTML = `
                     <span class="prompt">lynzl@spellbound:~#</span>
                     <input type="text" class="command-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
@@ -281,12 +300,10 @@
                     const confirmationResponse = cmd.toLowerCase();
                     const targetHost = this.sshTargetHost;
 
-                    // Add the static line for the 'yes'/'no' input
                     const prevInputLine = this.input.parentElement;
                     const staticLine = this.createPrompt(cmd);
                     this.terminal.replaceChild(staticLine, prevInputLine);
 
-                    // Reset state immediately
                     this.isWaitingForSshConfirmation = false;
                     this.sshTargetHost = null;
 
@@ -294,64 +311,102 @@
                         const outputMessage = `Connecting to ${targetHost}...`;
                         const output = this.createOutput(outputMessage);
                         this.terminal.appendChild(output);
-                        this.scrollToBottom(); // Scroll down to show the message
+                        this.scrollToBottom(); 
 
-                        // Wait 2 seconds then redirect
                         setTimeout(() => {
                             window.location.href = 'https://madeline.spellbound.sh';
                         }, 2000);
-                        // Don't add a new input line here as we are redirecting
+                        // No new input line if redirecting
                     } else {
                         const outputMessage = "Connection cancelled.";
                         const output = this.createOutput(outputMessage);
                         this.terminal.appendChild(output);
-                        this.addNewInputLine(); // Add input line only if cancelled
+                        this.addNewInputLine(); 
                         this.scrollToBottom();
                     }
-                    return; // Stop further processing for this input
+                    return; 
                 }
-
-                // Normal command processing starts here
+                
+                // Make current input static (standard behavior)
                 const prevInputLine = this.input.parentElement;
                 const staticLine = this.createPrompt(cmd);
                 this.terminal.replaceChild(staticLine, prevInputLine);
 
-                if (!cmd) {
+                // Handle Guess the Number game input
+                if (this.isGuessGameActive) {
+                    this.handleGuess(cmd);
+                    this.addNewInputLine();
+                    this.scrollToBottom();
+                    return;
+                }
+
+                // Normal command processing
+                if (!cmd && !this.isGuessGameActive) { // No command and not in game
                     this.addNewInputLine();
                     return;
                 }
-                this.commandHistory.push(cmd);
+
+                if (cmd) { // Only add to history if it's a non-empty command
+                    this.commandHistory.push(cmd);
+                }
                 this.historyIndex = -1;
                 this.currentInput = '';
                 this.tabCompletionCandidates = [];
                 this.tabCompletionIndex = 0;
+                
                 const commandParts = cmd.split(' ');
                 const baseCmd = commandParts[0];
                 const argument = commandParts.slice(1).join(' ');
 
                 if (commands[baseCmd]) {
-                    const result = commands[baseCmd].execute(argument);
-                    if (result && typeof result.then === 'function') {
+                    const result = commands[baseCmd].execute(argument); // 'this' inside execute is 'commands[baseCmd]'
+                    if (result && typeof result.then === 'function') { // Async command
                         result.then(outputContent => {
-                            const output = this.createOutput(outputContent);
-                            this.terminal.appendChild(output);
+                            if (outputContent !== undefined) { // Only append if there's content
+                                const output = this.createOutput(outputContent);
+                                this.terminal.appendChild(output);
+                            }
+                            // Check if game was started and needs no further input line from here
+                            if (baseCmd === 'guess' && this.isGuessGameActive) {
+                                // The game will prompt itself if needed via its own output
+                            } else {
+                                this.addNewInputLine();
+                            }
+                            this.scrollToBottom();
+                        }).catch(error => {
+                            const errorOutput = this.createOutput(`Error: ${error}`, true);
+                            this.terminal.appendChild(errorOutput);
                             this.addNewInputLine();
                             this.scrollToBottom();
                         });
-                    } else if (result) {
+                    } else if (result !== undefined) { // Sync command with output
                         if (baseCmd === 'help') {
                             const output = this.createOutput(result, false, true);
                             this.terminal.appendChild(output);
                         } else if (baseCmd === 'fetch') {
                             const output = document.createElement('div');
                             output.className = 'output';
-                            output.innerHTML = result;
+                            output.innerHTML = result; // Assumes fetch returns HTML string
                             this.terminal.appendChild(output);
-                        } else {
+                        } else if (baseCmd === 'guess' && this.isGuessGameActive) {
+                            // Game start message is handled, specific game prompts are in handleGuess
+                             const output = this.createOutput(result);
+                             this.terminal.appendChild(output);
+                        }
+                         else {
                             const output = this.createOutput(result);
                             this.terminal.appendChild(output);
                         }
-                        this.addNewInputLine();
+                        // If it's the start of the guess game, the message is already the prompt.
+                        // Otherwise, add a new input line.
+                        if (!(baseCmd === 'guess' && this.isGuessGameActive)) {
+                           this.addNewInputLine();
+                        }
+                        this.scrollToBottom();
+                    } else { // Command that produces no direct output but might modify state (like 'clear', or 'guess' start)
+                        if (!(baseCmd === 'guess' && this.isGuessGameActive)) {
+                           this.addNewInputLine();
+                        }
                         this.scrollToBottom();
                     }
                 } else {
@@ -361,22 +416,65 @@
                     this.scrollToBottom();
                 }
             }
+
+            // --- Guess the Number Game Logic ---
+            startGameGuessTheNumber() {
+                this.isGuessGameActive = true;
+                this.guessGameSecretNumber = Math.floor(Math.random() * (this.guessGameMax - this.guessGameMin + 1)) + this.guessGameMin;
+                this.guessGameAttemptsLeft = this.guessGameTotalAttempts;
+                return `I've picked a number between ${this.guessGameMin} and ${this.guessGameMax}. You have ${this.guessGameAttemptsLeft} attempts.\nType your guess:`;
+            }
+
+            handleGuess(guessCmd) {
+                if (!this.isGuessGameActive) return;
+
+                const guess = parseInt(guessCmd);
+                let message = "";
+
+                if (isNaN(guess)) {
+                    message = `"${guessCmd}" is not a valid number. Try again.\nYou have ${this.guessGameAttemptsLeft} attempts left.`;
+                } else {
+                    this.guessGameAttemptsLeft--;
+                    if (guess === this.guessGameSecretNumber) {
+                        message = `Correct! The number was ${this.guessGameSecretNumber}. You guessed it in ${this.guessGameTotalAttempts - this.guessGameAttemptsLeft} attempts.`;
+                        this.isGuessGameActive = false; // Game over
+                    } else if (this.guessGameAttemptsLeft === 0) {
+                        message = `Sorry, you've run out of attempts! The number was ${this.guessGameSecretNumber}.`;
+                        this.isGuessGameActive = false; // Game over
+                    } else if (guess < this.guessGameSecretNumber) {
+                        message = `Too low. You have ${this.guessGameAttemptsLeft} attempts left.\nType your guess:`;
+                    } else { // guess > this.guessGameSecretNumber
+                        message = `Too high. You have ${this.guessGameAttemptsLeft} attempts left.\nType your guess:`;
+                    }
+                }
+                const output = this.createOutput(message);
+                this.terminal.appendChild(output);
+
+                if (!this.isGuessGameActive) { // Game just ended
+                    // Optionally, add a message like "Type 'guess' to play again."
+                }
+            }
+            // --- End Guess the Number Game Logic ---
         }
 
         function formatHelp(commands) {
             const categories = {
                 personal: ['whoami', 'about', 'contact', 'projects',],
                 system: ['help', 'clear', 'fetch', 'ssh'],
-                fun: ['joke', 'catfact'],
+                fun: ['joke', 'catfact', 'guess'], // Added 'guess' here
                 tools: ['tiers', 'define', 'calc', 'mcserver'],
-                misc: ['credits',]
+                misc: ['credits', 'timesince'] // Moved timesince to misc for this example
             };
 
             let output = '';
             for (const category in categories) {
                 output += `\n${category.toUpperCase()}:\n`;
-                const maxCmdLen = Math.max(...categories[category].map(cmd => cmd.length));
-                categories[category].forEach(cmd => {
+                // Ensure all commands in the category exist in the main commands object
+                const validCommandsInCategory = categories[category].filter(cmd => commands[cmd]);
+                if (validCommandsInCategory.length === 0) continue;
+
+                const maxCmdLen = Math.max(...validCommandsInCategory.map(cmd => cmd.length));
+                validCommandsInCategory.forEach(cmd => {
                     output += `${cmd.padEnd(maxCmdLen + 2)}${commands[cmd].desc}\n`;
                 });
             }
@@ -427,7 +525,7 @@
                 desc: "List projects",
                 execute: () => [
                     "LokaMarketWatch (Unfinished) - Discord bot that tracks LokaMC markets https://github.com/Lyn1dev/lokamarketwatch",
-                    "MCTierTagger                 - In-game tiertagger fork to display tiers for mctiers.io",
+                    "MCTierTagger               - In-game tiertagger fork to display tiers for mctiers.io",
                     "other random stuff like this website idk"
                 ].join('\n')
             },
@@ -440,42 +538,36 @@
             },
             clear: {
                 desc: "Clear the terminal",
-                execute: function() {
-                    terminal.clearVisibleScreen();
-                    return '';
+                execute: function() { // `this` here is `commands.clear`
+                    terminal.clearVisibleScreen(); // Use the global `terminal` instance
+                    return ''; // Return empty or undefined so no extra output line is printed by default logic
                 }
             },
             ssh: {
                 desc: "Connect to a remote computer.",
                 execute: (args) => {
                     if (args === 'madeline@spellbound') {
-                        // Display confirmation question in the terminal
                         const question = `Are you sure you want to connect to ${args}? (yes/no)`;
-                        const output = terminal.createOutput(question); // Use the terminal instance
-                        terminal.terminal.appendChild(output); // Append question to terminal
+                        const output = terminal.createOutput(question); 
+                        terminal.terminal.appendChild(output); 
 
-                        // Set state to wait for confirmation
                         terminal.isWaitingForSshConfirmation = true;
                         terminal.sshTargetHost = args;
 
-                         // Add a new input line for the yes/no answer, with a simple prompt '>'
-                         const inputLine = document.createElement('div');
-                         // Add a specific class for potential styling
-                         inputLine.className = 'input-line confirmation-input-line';
-                         inputLine.innerHTML = `
-                             <span class="confirmation-prompt" style="color: var(--gray); margin-right: 0.5em;">></span>
-                             <input type="text" class="command-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-                         `;
-                         terminal.terminal.appendChild(inputLine);
-                         terminal.input = inputLine.querySelector('.command-input');
+                        const inputLine = document.createElement('div');
+                        inputLine.className = 'input-line confirmation-input-line'; 
+                        inputLine.innerHTML = `
+                            <span class="confirmation-prompt" style="color: var(--gray); margin-right: 0.5em;">></span>
+                            <input type="text" class="command-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+                        `;
+                        terminal.terminal.appendChild(inputLine);
+                        terminal.input = inputLine.querySelector('.command-input');
                         terminal.input.focus();
-                        terminal.setupEventListeners(); // Re-attach listeners to the new input
+                        terminal.setupEventListeners(); 
                         terminal.scrollToBottom();
-
-                        return ''; // Don't add another input line via processCommand's default path
-
+                        return ''; // No default output, handled by confirmation logic
                     } else if (args) {
-                         return `-bash: ssh: Could not resolve hostname ${args}: Name or service not known`;
+                        return `-bash: ssh: Could not resolve hostname ${args}: Name or service not known`;
                     }
                     else {
                         return "usage: ssh user@hostname. Try ssh madeline@spellbound";
@@ -488,15 +580,15 @@
                     const logoLines = [
                         "...=*#*+...*.*.",
                         ".*#%%%%%#**#**%*:",
-                        "        **##@%##*+",
-                        "        +##**+*#####**#",
-                        "         #*++**********##",
-                        "        *%*+******##*##**#@           *. ",
-                        "       *#****@##**##+++++++++++****+**   ",
-                        "       .%@#**#++++*******@@%***%=        ",
-                        "   %%@@@@#++++**+****%%@.                ",
-                        " %%@@#+++=+*%%@.                         ",
-                        "#+%=#@@+=                                 "
+                        "      **##@%##*+",
+                        "      +##**+*#####**#",
+                        "        #*++**********##",
+                        "      *%*+******##*##**#@         *. ",
+                        "      *#****@##**##+++++++++++****+** ",
+                        "      .%@#**#++++*******@@%***%=       ",
+                        "  %%@@@@#++++**+****%%@.              ",
+                        " %%@@#+++=+*%%@.                      ",
+                        "#+%=#@@+=                            "
                     ];
                     const infoLines = [
                         "{blue}lynzl{reset}{gray}@{blue}spellbound{reset}",
@@ -512,7 +604,7 @@
                         "{blue}Memory:    {reset}{white}19995MiB / 63745MiB{reset}"
                     ];
                     const logoWidth = Math.max(...logoLines.map(l => l.length));
-                    const infoWidth = Math.max(...infoLines.map(l => l.replace(/\{[^}]+\}/g, '').length));
+                    // const infoWidth = Math.max(...infoLines.map(l => l.replace(/\{[^}]+\}/g, '').length));
                     const lines = [];
                     const totalLines = Math.max(logoLines.length, infoLines.length);
                     for (let i = 0; i < totalLines; i++) {
@@ -534,19 +626,28 @@
                     lines.push(colorBar);
                     let out = lines.join('\n');
                     const colorMap = {
-                        lavender: 'var(--lavender)',
-                        lilac: 'var(--lilac)',
-                        mint: 'var(--mint)',
-                        pink: 'var(--pink)',
-                        blue: 'var(--blue)',
-                        yellow: 'var(--yellow)',
-                        white: 'var(--white)',
-                        gray: 'var(--gray)',
-                        red: '#f38ba8',
-                        green: '#a6e3a1',
-                        reset: false
+                        lavender: 'var(--lavender)', lilac: 'var(--lilac)', mint: 'var(--mint)',
+                        pink: 'var(--pink)', blue: 'var(--blue)', yellow: 'var(--yellow)',
+                        white: 'var(--white)', gray: 'var(--gray)', red: '#f38ba8',
+                        green: '#a6e3a1', reset: 'var(--white)' // reset to default text color
                     };
-                    out = out.replace(/\{(\w+)\}/g, (m, c) => colorMap[c] ? `<span style=\"color:${colorMap[c]}\">` : '</span>');
+                    // Simpler span replacement:
+                    out = out.replace(/\{(\w+)\}/g, (match, colorName) => {
+                        const colorValue = colorMap[colorName.toLowerCase()];
+                        if (colorValue === colorMap.reset) { // If it's {reset}
+                            return '</span>';
+                        } else if (colorValue) {
+                            return `<span style="color:${colorValue}">`;
+                        }
+                        return match; // Should not happen if all placeholders are in colorMap
+                    });
+                    // Ensure any unclosed spans are closed if the line ends before a {reset}
+                    // This is a basic fix; more robust parsing might be needed for complex cases.
+                    const openSpans = (out.match(/<span/g) || []).length;
+                    const closeSpans = (out.match(/<\/span/g) || []).length;
+                    if (openSpans > closeSpans) {
+                        out += '</span>'.repeat(openSpans - closeSpans);
+                    }
                     return `<pre style='margin:0;background:none;border:none;font-family:inherit;font-size:inherit;line-height:1.1;'>${out}</pre>`;
                 }
             },
@@ -571,13 +672,12 @@
                 desc: "Live timers for two very important dates",
                 execute: () => {
                     setTimeout(() => {
-                        // Replace the timer lines with spans for live updating
                         const outputs = document.querySelectorAll('.output');
                         let last = null;
                         outputs.forEach(o => {
                             if (o.textContent.includes('💊') && o.textContent.includes('❤️')) last = o;
                         });
-                        if (last && !last.querySelector('#timer1')) {
+                        if (last && !last.querySelector('#timer1')) { // Check if spans already exist
                             last.innerHTML = last.innerHTML.replace(
                                 /💊 ([^\n]*)/,
                                 '💊 <span id="timer1">$1</span>'
@@ -588,7 +688,7 @@
                         }
                         startTimesinceInterval();
                     }, 0);
-                    return [
+                    return [ // Initial output
                         '💊 Loading...',
                         '❤️ Loading...'
                     ].join('\n');
@@ -642,34 +742,45 @@
                     return getMinecraftServerStatus(address).then(status => status);
                 }
             },
+            // --- NEW GAME COMMAND ---
+            guess: {
+                desc: "Play a 'Guess the Number' game.",
+                execute: () => { // `this` here is `commands.guess`
+                    return terminal.startGameGuessTheNumber(); // Use the global `terminal` instance
+                }
+            }
         };
 
-        const terminal = new Terminal();
+        const terminal = new Terminal(); // Initialize terminal instance globally
 
         function getJoke(category) {
-            let url = 'https://v2.jokeapi.dev/joke/Any';
+            let url = 'https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,religious,political,racist,sexist,explicit'; // Added blacklist
             if (category) {
-                url = `https://v2.jokeapi.dev/joke/${category}`;
+                const validCategories = ["programming", "misc", "dark", "pun", "spooky", "christmas"];
+                if (validCategories.includes(category.toLowerCase())) {
+                    url = `https://v2.jokeapi.dev/joke/${category}?blacklistFlags=nsfw,religious,political,racist,sexist,explicit`;
+                } else {
+                    return Promise.resolve(`Invalid category. Try: ${validCategories.join(', ')} or no category for Any.`);
+                }
             }
 
             return fetch(url)
                 .then(response => response.json())
                 .then(data => {
                     if (data.error) {
-                        return "Failed to fetch joke.";
+                        return "Failed to fetch joke. API error or invalid category.";
                     }
-
                     if (data.joke) {
                         return data.joke;
                     } else if (data.setup && data.delivery) {
                         return `${data.setup}\n${data.delivery}`;
                     } else {
-                        return "Failed to fetch joke.";
+                        return "No joke found with the current filters/category.";
                     }
                 })
                 .catch(error => {
                     console.error("Error fetching joke:", error);
-                    return "Failed to fetch joke.";
+                    return "Failed to fetch joke due to a network or parsing error.";
                 });
         }
 
@@ -678,11 +789,9 @@
             return fetch(url)
                 .then(response => response.json())
                 .then(data => {
-                    // Assuming the API returns { "data": ["fact text"] }
                     if (data && data.data && Array.isArray(data.data) && data.data.length > 0) {
-                        return data.data[0]; // Return the first fact in the data array
+                        return data.data[0]; 
                     } else {
-                        // Fallback or alternative structure check if needed
                         console.warn("Unexpected API response structure from meowfacts:", data);
                         return "Failed to fetch cat fact: Unexpected API response format.";
                     }
@@ -697,38 +806,37 @@
             const url = `https://mctiers.io/api/search_profile/${username}`;
             return fetch(url)
                 .then(response => {
-                    console.log('MCTiers API Response Status:', response.status);
                     if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
+                         // MCTiers API returns 200 with an error message in JSON for "user not found"
+                        if (response.status === 404) throw new Error(`User "${username}" not found on MCTiers.`);
+                        // For other HTTP errors
+                        // throw new Error(`HTTP error! status: ${response.status}`);
                     }
                     return response.json();
                 })
                 .then(data => {
-                    console.log('MCTiers API Response Data:', data);
-                    if (data && data.rankings) {
+                    if (data && data.rankings) { // Successful response with data
                         let output = `Tiers for ${username}:\n`;
+                        if (Object.keys(data.rankings).length === 0) {
+                            return `No tier data found for ${username} on mctiers.io.`;
+                        }
                         for (const gamemode in data.rankings) {
                             const tierData = data.rankings[gamemode];
                             const retired = tierData.retired ? 'R' : '';
-                            const pos = tierData.pos === 1 ? 'L' : 'H';
+                            const pos = tierData.pos === 1 ? 'L' : (tierData.pos === 2 ? 'M' : 'H'); // L, M, H
                             const tier = tierData.tier;
                             output += `${gamemode.charAt(0).toUpperCase() + gamemode.slice(1)}: ${retired}${pos}T${tier}\n`;
                         }
-                        if (Object.keys(data.rankings).length === 0) {
-                            output += "No tier data found for this user.";
-                        }
                         return output;
-                    } else if (data && data.message) {
-                         return `Error: ${data.message}`;
-                    }
-                    else {
-                        console.warn("Unexpected API response structure from mctiers:", data);
-                        return "Failed to fetch user tiers: Unexpected API response format.";
+                    } else if (data && data.message) { // API returned an error message (e.g., user not found)
+                        return `MCTiers: ${data.message}`;
+                    } else {
+                        return `No tier data found for ${username} or unexpected API response.`;
                     }
                 })
                 .catch(error => {
                     console.error("Error fetching user tiers:", error);
-                    return `Failed to fetch user tiers: ${error.message}`;
+                    return `Failed to fetch user tiers for "${username}": ${error.message}`;
                 });
         }
 
@@ -738,110 +846,85 @@
                 .then(response => {
                     if (!response.ok) {
                         if (response.status === 404) {
-                            return { error: `Word "${word}" not found.` };
+                            return { error: `Word "${word}" not found.` }; // Special object for 404
                         }
                         throw new Error(`HTTP error! status: ${response.status}`);
                     }
                     return response.json();
                 })
                 .then(data => {
-                    if (data.error) {
+                    if (data.error) { // For 404 error passed as object
                         return data.error;
                     }
-                    if (!data || data.length === 0) {
+                    if (!data || data.length === 0 || (data.title && data.title === "No Definitions Found")) {
                         return `No definition found for "${word}".`;
                     }
-
-                    const entry = data[0]; // Assuming the first entry is the primary one
-                    let output = `Word: ${entry.word}\n`;
-
-                    if (entry.phonetic) {
-                        output += `Phonetic: ${entry.phonetic}\n`;
-                    }
-
-                    if (entry.origin) {
-                        output += `Origin: ${entry.origin}\n`;
-                    }
-
-                    if (entry.meanings && entry.meanings.length > 0) {
+                    // Process and format the definition
+                    let formattedOutput = `Definitions for "${word}":\n`;
+                    data.forEach(entry => {
+                        formattedOutput += `\nPhonetic: ${entry.phonetic || 'N/A'}\n`;
                         entry.meanings.forEach(meaning => {
-                            output += `\nPart of Speech: ${meaning.partOfSpeech}\n`;
-                            if (meaning.definitions && meaning.definitions.length > 0) {
-                                meaning.definitions.forEach((definition, index) => {
-                                    output += `${index + 1}. ${definition.definition}\n`;
-                                    if (definition.example) {
-                                        output += `   Example: "${definition.example}"\n`;
-                                    }
-                                });
-                            }
+                            formattedOutput += `\n Part of speech: ${meaning.partOfSpeech}\n`;
+                            meaning.definitions.forEach((def, index) => {
+                                formattedOutput += `  ${index + 1}. ${def.definition}\n`;
+                                if (def.example) {
+                                    formattedOutput += `     Example: ${def.example}\n`;
+                                }
+                            });
                         });
-                    } else {
-                        output += "No meanings found for this word.";
-                    }
-
-                    return output;
+                    });
+                    return formattedOutput;
                 })
                 .catch(error => {
                     console.error("Error fetching definition:", error);
-                    return `Failed to fetch definition: ${error.message}`;
+                    return `Failed to fetch definition for "${word}": ${error.message}`;
                 });
         }
 
         function evaluateExpression(expression) {
             try {
-                // Use eval() to evaluate the mathematical expression
-                const result = eval(expression);
-                // Check if the result is a valid number
-                if (typeof result === 'number' && isFinite(result)) {
-                    return result.toString();
-                } else {
-                    return "Invalid expression.";
+                // A more robust and safer way would be to use a math expression parser library
+                // For simplicity, using Function constructor, but BEWARE: IT'S LIKE EVAL, UNSAFE WITH ARBITRARY USER INPUT
+                // This implementation assumes simple math and does not allow access to global scope or functions beyond Math.
+                const sanitizedExpression = expression.replace(/[^-()\d/*+%.e\s]/g, ''); // Basic sanitization
+                if (sanitizedExpression !== expression) {
+                    //return "Error: Invalid characters in expression."; // too restrictive
                 }
-            } catch (error) {
-                // Catch any errors during evaluation (e.g., syntax errors)
-                console.error("Error evaluating expression:", error);
-                return "Error evaluating expression. Please check your syntax.";
+                const result = new Function('return ' + sanitizedExpression)();
+                if (typeof result !== 'number' || isNaN(result)) {
+                    return "Error: Invalid expression or result is not a number.";
+                }
+                return result.toString();
+            } catch (e) {
+                return `Error: ${e.message}`;
             }
         }
 
         function getMinecraftServerStatus(address) {
-            const url = `https://api.mcsrvstat.us/3/${address}`;
+            const url = `https://api.mcsrvstat.us/2/${address}`;
             return fetch(url)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    return response.json();
-                })
+                .then(response => response.json())
                 .then(data => {
-                    if (!data || !data.online) {
-                        return `Server "${address}" is offline or not found.`;
+                    if (data.online) {
+                        let output = `Server: ${address} is ONLINE\n`;
+                        output += `MOTD: ${Array.isArray(data.motd.clean) ? data.motd.clean.join('\\n      ') : data.motd.clean}\n`;
+                        output += `Players: ${data.players.online} / ${data.players.max}\n`;
+                        output += `Version: ${data.version}\n`;
+                        if (data.software) output += `Software: ${data.software}\n`;
+                        if (data.plugins && data.plugins.names && data.plugins.names.length > 0) {
+                            output += `Plugins (${data.plugins.names.length}): ${data.plugins.names.join(', ')}\n`;
+                        }
+                        return output;
+                    } else {
+                        return `Server: ${address} is OFFLINE or could not be reached.`;
                     }
-
-                    let output = `Server: ${address}\n`;
-                    output += `Status: Online\n`;
-
-                    if (data.version) {
-                        // Handle cases where version is an array or string
-                        const version = Array.isArray(data.version) ? data.version.join(', ') : data.version;
-                        output += `Version: ${version}\n`;
-                    }
-
-                    if (data.players) {
-                        output += `Players: ${data.players.online}/${data.players.max}\n`;
-                    }
-
-                    if (data.motd && data.motd.clean) {
-                        output += `MOTD:\n${data.motd.clean.join('\n')}\n`;
-                    }
-
-                    return output;
                 })
                 .catch(error => {
-                    console.error("Error fetching server status:", error);
-                    return `Failed to fetch server status: ${error.message}`;
+                    console.error("Error fetching Minecraft server status:", error);
+                    return `Failed to fetch status for ${address}: ${error.message}`;
                 });
         }
+
     </script>
 </body>
 </html>
