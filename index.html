@@ -388,19 +388,18 @@
                             output.className = 'output';
                             output.innerHTML = result; // Assumes fetch returns HTML string
                             this.terminal.appendChild(output);
-                        } else if (baseCmd === 'guess' && this.isGuessGameActive) {
-                            // Game start message is handled, specific game prompts are in handleGuess
-                             const output = this.createOutput(result);
-                             this.terminal.appendChild(output);
-                        }
-                         else {
+                        } else if (baseCmd === 'guess') {
+                            const output = this.createOutput(result);
+                            this.terminal.appendChild(output);
+                            // Always add a new input line for guess command
+                            this.addNewInputLine();
+                        } else {
                             const output = this.createOutput(result);
                             this.terminal.appendChild(output);
                         }
-                        // If it's the start of the guess game, the message is already the prompt.
-                        // Otherwise, add a new input line.
-                        if (!(baseCmd === 'guess' && this.isGuessGameActive)) {
-                           this.addNewInputLine();
+                        // Add new input line for non-guess commands
+                        if (baseCmd !== 'guess') {
+                            this.addNewInputLine();
                         }
                         this.scrollToBottom();
                     } else { // Command that produces no direct output but might modify state (like 'clear', or 'guess' start)
